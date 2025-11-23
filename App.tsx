@@ -6,7 +6,7 @@ import { audio } from './services/audioService';
 import Particles from './components/Particles';
 import BossDisplay from './components/BossDisplay';
 import HeroDisplay from './components/HeroDisplay';
-import { Sword, Volume2, VolumeX, Heart, BookOpen } from 'lucide-react';
+import { Sword, Volume2, VolumeX, BookOpen, ArrowLeft, Home } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 const App: React.FC = () => {
@@ -35,11 +35,15 @@ const App: React.FC = () => {
   const [bossAttacking, setBossAttacking] = useState<boolean>(false);
   const [heroAttacking, setHeroAttacking] = useState<boolean>(false);
   const [loadingText, setLoadingText] = useState<string>("Loading...");
+  
+  // Input Lock to prevent ghost typing during word switch
+  const [isProcessingMatch, setIsProcessingMatch] = useState<boolean>(false);
 
   // Refs
   const inputRef = useRef<HTMLInputElement>(null);
   const bossTimerRef = useRef<NodeJS.Timeout | null>(null);
   const gameLoopRef = useRef<number | null>(null);
+  const isComposing = useRef<boolean>(false); // New: Track IME Composition state
 
   // --- Initialization ---
 
@@ -74,7 +78,7 @@ const App: React.FC = () => {
       name: config.bossName,
       title: `${config.element}之魔`,
       element: config.element,
-      maxHealth: (100 + (level * 50)) * diffSettings.damageMultiplier, // More HP on Hard generally, but using damageMult for balancing
+      maxHealth: (100 + (level * 50)) * diffSettings.damageMultiplier, 
       currentHealth: (100 + (level * 50)) * diffSettings.damageMultiplier,
       attackInterval: Math.max(1500, (5000 - (level * 500)) * diffSettings.speedMultiplier), 
       damage: (10 + (level * 2)) * diffSettings.damageMultiplier,
@@ -107,15 +111,32 @@ const App: React.FC = () => {
     setIsHealingWord(isHeal);
 
     let nextWord = "";
-    if (isHeal) {
-         const healWords = STATIC_WORDS[ElementType.HEALING];
-         nextWord = healWords[Math.floor(Math.random() * healWords.length)];
-    } else {
-         nextWord = list[Math.floor(Math.random() * list.length)];
-    }
+    let attempts = 0;
+
+    // Avoid repeating the same word immediately
+    // Loop up to 10 times to find a different word
+    do {
+        if (isHeal) {
+             const healWords = STATIC_WORDS[ElementType.HEALING];
+             nextWord = healWords[Math.floor(Math.random() * healWords.length)];
+        } else {
+             nextWord = list[Math.floor(Math.random() * list.length)];
+        }
+        attempts++;
+    } while (nextWord === currentWord && list.length > 1 && attempts < 10);
     
     setCurrentWord(nextWord);
-    setInputValue(""); // Clear input
+    setInputValue(""); // Force clear input state
+    setIsProcessingMatch(false); // Unlock input
+    isComposing.current = false; // Reset composition state just in case
+
+    // Ensure focus remains
+    setTimeout(() => {
+        if(inputRef.current) {
+            inputRef.current.value = ""; // Direct DOM clear to be safe against IME
+            inputRef.current.focus();
+        }
+    }, 0);
   };
 
   // --- Game Loop & Logic ---
@@ -186,17 +207,42 @@ const App: React.FC = () => {
     });
   };
 
+  // --- Input Handling (IME Optimized) ---
+
+  const checkMatch = (val: string) => {
+      // Strictly trimmed comparison
+      if (val.trim() === currentWord) {
+        // Match found!
+        setIsProcessingMatch(true);
+        setInputValue(""); // Clear UI immediately
+        handleWordComplete();
+        return true;
+      }
+      return false;
+  };
+
   const handleInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (status !== GameStatus.PLAYING) return;
+    if (status !== GameStatus.PLAYING || isProcessingMatch) return;
     
     const val = e.target.value;
     setInputValue(val);
 
-    if (val === currentWord) {
-      // Instant Clear
-      setInputValue("");
-      handleWordComplete();
+    // CRITICAL: If user is using IME (Cangjie/Zhuyin), do NOT check for match
+    // until composition is done.
+    if (!isComposing.current) {
+        checkMatch(val);
     }
+  };
+
+  const handleCompositionStart = () => {
+      isComposing.current = true;
+  };
+
+  const handleCompositionEnd = (e: React.CompositionEvent<HTMLInputElement>) => {
+      isComposing.current = false;
+      // Check match immediately after composition ends (when the user selects the word)
+      const val = e.currentTarget.value;
+      checkMatch(val);
   };
 
   const handleWordComplete = () => {
@@ -226,7 +272,10 @@ const App: React.FC = () => {
     }));
     setParticles(prev => [...prev, ...newParticles]);
 
-    pickNewWord(wordList, false); // Don't get two heals in a row usually
+    // Delay next word slightly for visual rhythm
+    setTimeout(() => {
+        pickNewWord(wordList, false); 
+    }, 100);
   };
 
   const handleAttack = () => {
@@ -268,7 +317,10 @@ const App: React.FC = () => {
       handleLevelComplete();
     } else {
       setBoss({ ...boss, currentHealth: newBossHealth });
-      pickNewWord(wordList, true);
+      // Slight delay before next word to allow the "Slash" animation to be felt
+      setTimeout(() => {
+          pickNewWord(wordList, true);
+      }, 150);
     }
   };
 
@@ -292,7 +344,7 @@ const App: React.FC = () => {
   // --- Rendering ---
 
   return (
-    <div className={`relative w-full h-screen flex flex-col items-center justify-between overflow-hidden bg-stone-100 ${screenShake ? 'shake-anim' : ''}`}>
+    <div className={`relative w-full h-screen flex flex-col items-center justify-between overflow-hidden bg-stone-100 text-stone-900 ${screenShake ? 'shake-anim' : ''}`}>
       
       {/* Background Ink Textures */}
       <div className="absolute inset-0 pointer-events-none opacity-10 bg-[url('https://www.transparenttextures.com/patterns/rice-paper.png')]"></div>
@@ -302,26 +354,37 @@ const App: React.FC = () => {
 
       {/* --- HUD --- */}
       {status === GameStatus.PLAYING && (
-      <header className="w-full p-4 flex justify-between items-start z-10 font-serif">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-             <div className="w-12 h-12 bg-black rounded-full text-white flex items-center justify-center font-ink text-2xl border-2 border-gray-600">
-                {level}
-             </div>
-             <div className="flex flex-col">
-                <span className="text-gray-800 font-bold text-lg">凌風 <span className="text-xs font-normal text-gray-500">Lv.{level}</span></span>
-                <div className="w-48 h-4 bg-gray-300 rounded overflow-hidden border border-gray-500 relative">
-                    <div className="h-full bg-green-600 transition-all duration-300" style={{ width: `${(playerHealth / PLAYER_MAX_HEALTH) * 100}%` }}></div>
-                    <div className="absolute inset-0 flex items-center justify-center text-[10px] text-white font-bold shadow-black drop-shadow-md">{playerHealth}/{PLAYER_MAX_HEALTH}</div>
-                </div>
-             </div>
-          </div>
-          <div className="text-stone-600 font-bold">
-            <span className="mr-4">分數: {score}</span>
-            <span className={`${combo > 2 ? 'text-red-600 scale-110' : 'text-stone-400'} transition-all inline-block`}>
-                {combo > 1 ? `${combo} 連擊!` : ''}
-            </span>
-          </div>
+      <header className="w-full p-4 flex justify-between items-start z-10">
+        <div className="flex gap-4">
+           {/* Return Button */}
+           <button 
+              onClick={() => setStatus(GameStatus.MENU)} 
+              className="w-12 h-12 bg-white/80 rounded-full flex items-center justify-center border-2 border-stone-300 text-stone-600 hover:bg-red-50 hover:text-red-600 transition-colors"
+              title="返回主選單"
+           >
+              <ArrowLeft size={24} />
+           </button>
+
+           <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                 <div className="w-12 h-12 bg-stone-900 rounded-full text-white flex items-center justify-center text-2xl border-2 border-stone-600 font-bold">
+                    {level}
+                 </div>
+                 <div className="flex flex-col">
+                    <span className="font-bold text-lg">凌風 <span className="text-xs font-normal text-gray-500">Lv.{level}</span></span>
+                    <div className="w-48 h-4 bg-gray-300 rounded overflow-hidden border border-gray-500 relative">
+                        <div className="h-full bg-green-600 transition-all duration-300" style={{ width: `${(playerHealth / PLAYER_MAX_HEALTH) * 100}%` }}></div>
+                        <div className="absolute inset-0 flex items-center justify-center text-[10px] text-white font-bold shadow-black drop-shadow-md">{playerHealth}/{PLAYER_MAX_HEALTH}</div>
+                    </div>
+                 </div>
+              </div>
+              <div className="text-stone-600 font-bold ml-2">
+                <span className="mr-4">分數: {score}</span>
+                <span className={`${combo > 2 ? 'text-red-600 scale-110' : 'text-stone-400'} transition-all inline-block`}>
+                    {combo > 1 ? `${combo} 連擊!` : ''}
+                </span>
+              </div>
+           </div>
         </div>
 
         <button onClick={() => {
@@ -341,17 +404,17 @@ const App: React.FC = () => {
         {/* Menu */}
         {status === GameStatus.MENU && (
           <div className="text-center space-y-6 bg-white/90 p-12 rounded-lg shadow-2xl backdrop-blur-sm border-4 border-double border-stone-800 max-w-2xl">
-            <h1 className="text-6xl md:text-8xl font-ink text-black mb-4">鍵靈勇者傳</h1>
-            <p className="text-xl text-stone-600 font-serif mb-8">Traditional Chinese Typing Roguelike</p>
+            <h1 className="text-6xl md:text-8xl font-bold text-stone-900 mb-4">鍵靈勇者傳</h1>
+            <p className="text-xl text-stone-600 mb-8">Traditional Chinese Typing Roguelike</p>
             
             <div className="flex flex-col items-center gap-4 mb-8">
-                <p className="font-serif text-stone-500">選擇難度</p>
+                <p className="text-stone-500 font-bold">選擇難度</p>
                 <div className="flex gap-4">
                     {(Object.values(GameDifficulty) as GameDifficulty[]).map((d) => (
                         <button
                             key={d}
                             onClick={() => setDifficulty(d)}
-                            className={`px-6 py-2 rounded font-serif border-2 transition-all ${difficulty === d ? 'bg-stone-800 text-white border-stone-800 scale-110' : 'bg-white text-stone-600 border-stone-300 hover:border-stone-600'}`}
+                            className={`px-6 py-3 rounded font-bold border-2 transition-all ${difficulty === d ? 'bg-stone-800 text-white border-stone-800 scale-110' : 'bg-white text-stone-600 border-stone-300 hover:border-stone-600'}`}
                         >
                             {d === 'EASY' ? '初出茅廬' : d === 'NORMAL' ? '身經百戰' : '一代宗師'}
                         </button>
@@ -361,7 +424,7 @@ const App: React.FC = () => {
 
             <button 
               onClick={startGame}
-              className="px-16 py-5 text-3xl bg-red-800 text-white font-ink rounded hover:bg-red-900 hover:scale-105 transition-all shadow-lg border-2 border-red-950"
+              className="px-16 py-5 text-3xl bg-red-800 text-white font-bold rounded hover:bg-red-900 hover:scale-105 transition-all shadow-lg border-2 border-red-950"
             >
               拔劍出征
             </button>
@@ -375,13 +438,13 @@ const App: React.FC = () => {
         {status === GameStatus.STORY && (
             <div className="absolute inset-0 bg-black/80 z-50 flex items-center justify-center p-8">
                 <div className="bg-[#f5f5dc] p-8 md:p-12 rounded shadow-2xl max-w-3xl w-full border-t-8 border-b-8 border-stone-800 flex flex-col items-center">
-                    <h2 className="text-4xl font-ink mb-6 text-stone-900">第 {level} 章</h2>
-                    <p className="text-xl md:text-2xl font-serif leading-relaxed text-stone-800 mb-10 text-center">
+                    <h2 className="text-4xl font-bold mb-6 text-stone-900">第 {level} 章</h2>
+                    <p className="text-xl md:text-2xl leading-relaxed text-stone-800 mb-10 text-center font-medium">
                         {currentStory}
                     </p>
                     <button 
                         onClick={startLevel} 
-                        className="flex items-center gap-2 px-8 py-3 bg-stone-800 text-[#f5f5dc] text-xl font-ink rounded hover:bg-stone-700 transition"
+                        className="flex items-center gap-2 px-8 py-3 bg-stone-800 text-[#f5f5dc] text-xl font-bold rounded hover:bg-stone-700 transition"
                     >
                         <BookOpen size={20} /> 繼續旅程
                     </button>
@@ -391,8 +454,8 @@ const App: React.FC = () => {
 
         {status === GameStatus.LOADING && (
            <div className="text-center animate-pulse">
-              <div className="text-6xl mb-4 font-ink">🌀</div>
-              <h2 className="text-3xl font-ink text-stone-800">{loadingText}</h2>
+              <div className="text-6xl mb-4">🌀</div>
+              <h2 className="text-3xl font-bold text-stone-800">{loadingText}</h2>
            </div>
         )}
 
@@ -407,11 +470,11 @@ const App: React.FC = () => {
             {/* Center: Interaction (Mobile: Top) */}
             <div className="order-3 md:order-2 w-full md:w-1/3 flex flex-col items-center justify-end pb-12">
                {/* Target Word */}
-               <div className={`relative mb-6 transition-transform ${isHealingWord ? 'scale-110' : ''}`}>
-                 <div className={`text-6xl md:text-7xl font-bold font-serif tracking-widest drop-shadow-md ${isHealingWord ? 'text-green-600' : 'text-stone-800'}`}>
+               <div className={`relative mb-6 transition-transform duration-200 ${isHealingWord ? 'scale-110' : ''} ${isProcessingMatch ? 'opacity-50 scale-95 blur-[1px]' : 'opacity-100'}`}>
+                 <div className={`text-6xl md:text-7xl font-bold tracking-widest drop-shadow-md ${isHealingWord ? 'text-green-600' : 'text-stone-800'}`}>
                     {currentWord}
                  </div>
-                 {isHealingWord && <div className="absolute -top-6 w-full text-center text-green-600 font-ink text-xl animate-bounce">靈力湧現!</div>}
+                 {isHealingWord && <div className="absolute -top-6 w-full text-center text-green-600 font-bold text-xl animate-bounce">靈力湧現!</div>}
                </div>
 
                {/* Input Field */}
@@ -424,9 +487,11 @@ const App: React.FC = () => {
                     type="text"
                     value={inputValue}
                     onChange={handleInput}
+                    onCompositionStart={handleCompositionStart}
+                    onCompositionEnd={handleCompositionEnd}
                     autoFocus
                     placeholder={isHealingWord ? "輸入以治癒..." : "輸入以攻擊..."}
-                    className={`block w-full pl-10 pr-3 py-4 border-b-4 bg-white/50 text-center text-3xl font-serif focus:outline-none transition-colors placeholder-stone-400 text-stone-900 shadow-sm rounded-t-lg
+                    className={`block w-full pl-10 pr-3 py-4 border-b-4 bg-white/50 text-center text-3xl font-bold focus:outline-none transition-colors placeholder-stone-400 text-stone-900 shadow-sm rounded-t-lg
                         ${isHealingWord ? 'border-green-500 focus:border-green-700' : 'border-stone-800 focus:border-red-600'}`}
                     autoComplete="off"
                     autoCorrect="off"
@@ -449,18 +514,18 @@ const App: React.FC = () => {
 
         {status === GameStatus.LEVEL_COMPLETE && (
             <div className="text-center">
-                 <h2 className="text-8xl font-ink text-green-800 mb-4 animate-bounce drop-shadow-lg">封印成功</h2>
-                 <p className="text-3xl font-serif text-stone-700">邪氣消散，準備前往下一層...</p>
+                 <h2 className="text-8xl font-bold text-green-800 mb-4 animate-bounce drop-shadow-lg">封印成功</h2>
+                 <p className="text-3xl text-stone-700">邪氣消散，準備前往下一層...</p>
             </div>
         )}
 
         {(status === GameStatus.GAME_OVER || status === GameStatus.VICTORY) && (
             <div className="bg-white/95 p-8 rounded-xl shadow-2xl border-4 border-double border-stone-800 max-w-2xl w-full mx-4 z-50">
-                <h2 className={`text-6xl font-ink text-center mb-8 ${status === GameStatus.VICTORY ? 'text-yellow-600' : 'text-stone-800'}`}>
+                <h2 className={`text-6xl font-bold text-center mb-8 ${status === GameStatus.VICTORY ? 'text-yellow-600' : 'text-stone-800'}`}>
                     {status === GameStatus.VICTORY ? '玄華界・救贖' : '勝敗乃兵家常事'}
                 </h2>
                 
-                <div className="grid grid-cols-2 gap-4 mb-8 text-xl font-serif">
+                <div className="grid grid-cols-2 gap-4 mb-8 text-xl">
                    <div className="bg-stone-100 p-4 rounded text-center">
                       <div className="text-sm text-gray-500">最終得分</div>
                       <div className="text-3xl font-bold">{score}</div>
@@ -479,7 +544,7 @@ const App: React.FC = () => {
                             { name: '連擊', val: maxCombo * 10 }, 
                             { name: '總分', val: Math.min(score / 10, 100) }
                         ]}>
-                            <XAxis dataKey="name" fontFamily="'Noto Serif TC', serif" />
+                            <XAxis dataKey="name" />
                             <YAxis hide />
                             <Tooltip />
                             <Bar dataKey="val" fill="#4a4a4a" radius={[4, 4, 0, 0]} />
@@ -490,13 +555,13 @@ const App: React.FC = () => {
                 <div className="flex justify-center gap-4">
                      <button 
                         onClick={() => setStatus(GameStatus.MENU)}
-                        className="px-6 py-3 border-2 border-stone-800 text-stone-800 text-xl rounded hover:bg-stone-100 transition font-serif"
+                        className="px-6 py-3 border-2 border-stone-800 text-stone-800 text-xl rounded hover:bg-stone-100 transition font-bold"
                     >
                         返回主選單
                     </button>
                     <button 
                         onClick={startGame}
-                        className="px-8 py-3 bg-stone-900 text-white text-xl rounded hover:bg-red-700 transition font-serif shadow-lg"
+                        className="px-8 py-3 bg-stone-900 text-white text-xl rounded hover:bg-red-700 transition font-bold shadow-lg"
                     >
                         重頭再來
                     </button>
@@ -507,8 +572,8 @@ const App: React.FC = () => {
       </main>
 
       {/* Footer / Controls */}
-      <footer className="w-full p-2 text-center text-stone-400 text-xs z-10 pointer-events-none font-serif">
-        鍵靈勇者傳 v1.1 - Powered by Gemini AI
+      <footer className="w-full p-2 text-center text-stone-400 text-xs z-10 pointer-events-none font-bold">
+        鍵靈勇者傳 v1.3 - Powered by Gemini AI
       </footer>
 
     </div>

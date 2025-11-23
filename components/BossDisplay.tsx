@@ -45,7 +45,7 @@ const BossDisplay: React.FC<BossDisplayProps> = ({ boss, isDamaged, isAttacking,
       <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 rounded-full opacity-20 blur-xl ${boss.color.replace('text-', 'bg-')}`}></div>
 
       {/* Main Boss Character */}
-      <div className={`text-[10rem] md:text-[14rem] leading-none select-none filter ink-blob transition-colors duration-500 ${displayColor}`}>
+      <div className={`text-[10rem] md:text-[14rem] leading-none select-none transition-colors duration-500 ${displayColor}`}>
         {displayIcon}
       </div>
 
@@ -60,9 +60,9 @@ const BossDisplay: React.FC<BossDisplayProps> = ({ boss, isDamaged, isAttacking,
       )}
       
       {/* Name */}
-      <div className="absolute -bottom-20 left-1/2 -translate-x-1/2 whitespace-nowrap text-2xl font-ink font-bold text-gray-900 tracking-widest">
+      <div className="absolute -bottom-20 left-1/2 -translate-x-1/2 whitespace-nowrap text-2xl font-bold text-gray-900 tracking-widest">
         {isHealingWord ? '森之靈' : boss.title} 
-        <span className="text-sm block text-center font-serif font-normal text-gray-500">
+        <span className="text-sm block text-center font-normal text-gray-500">
             {isHealingWord ? 'Healing Spirit' : boss.name}
         </span>
       </div>
@@ -70,7 +70,7 @@ const BossDisplay: React.FC<BossDisplayProps> = ({ boss, isDamaged, isAttacking,
       {/* Dialogue Bubble */}
       {isAttacking && (
          <div className="absolute -top-10 right-full mr-4 bg-white border-2 border-black p-4 rounded-tl-2xl rounded-br-2xl whitespace-nowrap shadow-lg animate-bounce z-20">
-            <p className="font-ink text-xl text-black">{boss.description}</p>
+            <p className="text-xl text-black font-bold">{boss.description}</p>
          </div>
       )}
     </div>
